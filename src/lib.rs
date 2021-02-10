@@ -25,18 +25,19 @@ use std::{
 use parking_lot::Mutex;
 
 pub use wgt::{
-    AdapterInfo, AddressMode, Backend, BackendBit, BindGroupLayoutEntry, BindingType,
-    BlendDescriptor, BlendFactor, BlendOperation, BufferAddress, BufferBindingType, BufferSize,
-    BufferUsage, Color, ColorStateDescriptor, ColorWrite, CommandBufferDescriptor, CompareFunction,
-    CullMode, DepthStencilStateDescriptor, DeviceType, DynamicOffset, Extent3d, Features,
-    FilterMode, FrontFace, IndexFormat, InputStepMode, Limits, Origin3d, PolygonMode,
-    PowerPreference, PresentMode, PrimitiveTopology, PushConstantRange,
-    RasterizationStateDescriptor, SamplerBorderColor, ShaderFlags, ShaderLocation, ShaderStage,
-    StencilOperation, StencilStateDescriptor, StencilStateFaceDescriptor, StorageTextureAccess,
-    SwapChainDescriptor, SwapChainStatus, TextureAspect, TextureDataLayout, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsage, TextureViewDimension,
-    VertexAttributeDescriptor, VertexFormat, BIND_BUFFER_ALIGNMENT, COPY_BUFFER_ALIGNMENT,
-    COPY_BYTES_PER_ROW_ALIGNMENT, PUSH_CONSTANT_ALIGNMENT,
+    AdapterInfo, AddressMode, Backend, BackendBit, BindGroupLayoutEntry, BindingType, BlendFactor,
+    BlendOperation, BlendState, BufferAddress, BufferBindingType, BufferSize, BufferUsage, Color,
+    ColorTargetState, ColorWrite, CommandBufferDescriptor, CompareFunction, CullMode,
+    DepthBiasState, DepthStencilState, DeviceType, DynamicOffset, Extent3d, Features, FilterMode,
+    FrontFace, IndexFormat, InputStepMode, Limits, MultisampleState, Origin3d,
+    PipelineStatisticsTypes, PolygonMode, PowerPreference, PresentMode, PrimitiveState,
+    PrimitiveTopology, PushConstantRange, QuerySetDescriptor, QueryType, SamplerBorderColor,
+    ShaderFlags, ShaderLocation, ShaderStage, StencilFaceState, StencilOperation, StencilState,
+    StorageTextureAccess, SwapChainDescriptor, SwapChainStatus, TextureAspect, TextureDataLayout,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsage, TextureViewDimension,
+    VertexAttribute, VertexFormat, BIND_BUFFER_ALIGNMENT, COPY_BUFFER_ALIGNMENT,
+    COPY_BYTES_PER_ROW_ALIGNMENT, PUSH_CONSTANT_ALIGNMENT, QUERY_SET_MAX_QUERIES, QUERY_SIZE,
+    VERTEX_STRIDE_ALIGNMENT,
 };
 
 use backend::{BufferMappedRange, Context as C};
@@ -53,6 +54,9 @@ trait ComputePassInner<Ctx: Context> {
     fn insert_debug_marker(&mut self, label: &str);
     fn push_debug_group(&mut self, group_label: &str);
     fn pop_debug_group(&mut self);
+    fn write_timestamp(&mut self, query_set: &Ctx::QuerySetId, query_index: u32);
+    fn begin_pipeline_statistics_query(&mut self, query_set: &Ctx::QuerySetId, query_index: u32);
+    fn end_pipeline_statistics_query(&mut self);
     fn dispatch(&mut self, x: u32, y: u32, z: u32);
     fn dispatch_indirect(
         &mut self,
@@ -138,6 +142,9 @@ trait RenderPassInner<Ctx: Context>: RenderInner<Ctx> {
     fn insert_debug_marker(&mut self, label: &str);
     fn push_debug_group(&mut self, group_label: &str);
     fn pop_debug_group(&mut self);
+    fn write_timestamp(&mut self, query_set: &Ctx::QuerySetId, query_index: u32);
+    fn begin_pipeline_statistics_query(&mut self, query_set: &Ctx::QuerySetId, query_index: u32);
+    fn end_pipeline_statistics_query(&mut self);
     fn execute_bundles<'a, I: Iterator<Item = &'a Ctx::RenderBundleId>>(
         &mut self,
         render_bundles: I,
@@ -155,6 +162,7 @@ trait Context: Debug + Send + Sized + Sync {
     type SamplerId: Debug + Send + Sync + 'static;
     type BufferId: Debug + Send + Sync + 'static;
     type TextureId: Debug + Send + Sync + 'static;
+    type QuerySetId: Debug + Send + Sync + 'static;
     type PipelineLayoutId: Debug + Send + Sync + 'static;
     type RenderPipelineId: Debug + Send + Sync + 'static;
     type ComputePipelineId: Debug + Send + Sync + 'static;
@@ -256,6 +264,11 @@ trait Context: Debug + Send + Sized + Sync {
         device: &Self::DeviceId,
         desc: &SamplerDescriptor,
     ) -> Self::SamplerId;
+    fn device_create_query_set(
+        &self,
+        device: &Self::DeviceId,
+        desc: &QuerySetDescriptor,
+    ) -> Self::QuerySetId;
     fn device_create_command_encoder(
         &self,
         device: &Self::DeviceId,
@@ -309,6 +322,7 @@ trait Context: Debug + Send + Sized + Sync {
     fn texture_drop(&self, texture: &Self::TextureId);
     fn texture_view_drop(&self, texture_view: &Self::TextureViewId);
     fn sampler_drop(&self, sampler: &Self::SamplerId);
+    fn query_set_drop(&self, query_set: &Self::QuerySetId);
     fn bind_group_drop(&self, bind_group: &Self::BindGroupId);
     fn bind_group_layout_drop(&self, bind_group_layout: &Self::BindGroupLayoutId);
     fn pipeline_layout_drop(&self, pipeline_layout: &Self::PipelineLayoutId);
@@ -386,6 +400,22 @@ trait Context: Debug + Send + Sized + Sync {
     fn command_encoder_push_debug_group(&self, encoder: &Self::CommandEncoderId, label: &str);
     fn command_encoder_pop_debug_group(&self, encoder: &Self::CommandEncoderId);
 
+    fn command_encoder_write_timestamp(
+        &self,
+        encoder: &Self::CommandEncoderId,
+        query_set: &Self::QuerySetId,
+        query_index: u32,
+    );
+    fn command_encoder_resolve_query_set(
+        &self,
+        encoder: &Self::CommandEncoderId,
+        query_set: &Self::QuerySetId,
+        first_query: u32,
+        query_count: u32,
+        destination: &Self::BufferId,
+        destination_offset: BufferAddress,
+    );
+
     fn render_bundle_encoder_finish(
         &self,
         encoder: Self::RenderBundleEncoderId,
@@ -411,6 +441,7 @@ trait Context: Debug + Send + Sized + Sync {
         queue: &Self::QueueId,
         command_buffers: I,
     );
+    fn queue_get_timestamp_period(&self, queue: &Self::QueueId) -> f32;
 }
 
 /// Context for all other wgpu objects. Instance of wgpu.
@@ -868,6 +899,20 @@ impl Drop for RenderBundle {
     }
 }
 
+/// Handle to a query set.
+pub struct QuerySet {
+    context: Arc<C>,
+    id: <C as Context>::QuerySetId,
+}
+
+impl Drop for QuerySet {
+    fn drop(&mut self) {
+        if !thread::panicking() {
+            self.context.query_set_drop(&self.id);
+        }
+    }
+}
+
 /// Handle to a command queue on a device.
 ///
 /// A `Queue` executes recorded [`CommandBuffer`] objects and provides convenience methods
@@ -1107,25 +1152,53 @@ pub struct BindGroupDescriptor<'a> {
     pub entries: &'a [BindGroupEntry<'a>],
 }
 
-/// Describes a programmable pipeline stage.
+/// Describes the attachments of a render pass.
+///
+/// Note: separate lifetimes are needed because the texture views
+/// have to live as long as the pass is recorded, while everything else doesn't.
+#[derive(Clone, Debug, Default)]
+pub struct RenderPassDescriptor<'a, 'b> {
+    /// Debug label of the render pass. This will show up in graphics debuggers for easy identification.
+    pub label: Option<&'b str>,
+    /// The color attachments of the render pass.
+    pub color_attachments: &'b [RenderPassColorAttachmentDescriptor<'a>],
+    /// The depth and stencil attachment of the render pass, if any.
+    pub depth_stencil_attachment: Option<RenderPassDepthStencilAttachmentDescriptor<'a>>,
+}
+
+/// Describes how the vertex buffer is interpreted.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct VertexBufferLayout<'a> {
+    /// The stride, in bytes, between elements of this buffer.
+    pub array_stride: BufferAddress,
+    /// How often this vertex buffer is "stepped" forward.
+    pub step_mode: InputStepMode,
+    /// The list of attributes which comprise a single vertex.
+    pub attributes: &'a [VertexAttribute],
+}
+
+/// Describes the vertex process in a render pipeline.
 #[derive(Clone, Debug)]
-pub struct ProgrammableStageDescriptor<'a> {
+pub struct VertexState<'a> {
     /// The compiled shader module for this stage.
     pub module: &'a ShaderModule,
     /// The name of the entry point in the compiled shader. There must be a function that returns
     /// void with this name in the shader.
     pub entry_point: &'a str,
+    /// The format of any vertex buffers used with this pipeline.
+    pub buffers: &'a [VertexBufferLayout<'a>],
 }
 
-/// Describes the attachments of a render pass.
-#[derive(Clone, Debug, Default)]
-pub struct RenderPassDescriptor<'a, 'b> {
-    /// Debug label of the render pass. This will show up in graphics debuggers for easy identification.
-    pub label: Option<&'a str>,
-    /// The color attachments of the render pass.
-    pub color_attachments: &'b [RenderPassColorAttachmentDescriptor<'a>],
-    /// The depth and stencil attachment of the render pass, if any.
-    pub depth_stencil_attachment: Option<RenderPassDepthStencilAttachmentDescriptor<'a>>,
+/// Describes the fragment process in a render pipeline.
+#[derive(Clone, Debug)]
+pub struct FragmentState<'a> {
+    /// The compiled shader module for this stage.
+    pub module: &'a ShaderModule,
+    /// The name of the entry point in the compiled shader. There must be a function that returns
+    /// void with this name in the shader.
+    pub entry_point: &'a str,
+    /// The format of any vertex buffers used with this pipeline.
+    pub targets: &'a [ColorTargetState],
 }
 
 /// Describes a render (graphics) pipeline.
@@ -1135,33 +1208,16 @@ pub struct RenderPipelineDescriptor<'a> {
     pub label: Option<&'a str>,
     /// The layout of bind groups for this pipeline.
     pub layout: Option<&'a PipelineLayout>,
-    /// The compiled vertex stage and its entry point.
-    pub vertex_stage: ProgrammableStageDescriptor<'a>,
-    /// The compiled fragment stage and its entry point, if any.
-    pub fragment_stage: Option<ProgrammableStageDescriptor<'a>>,
-    /// The rasterization process for this pipeline.
-    pub rasterization_state: Option<RasterizationStateDescriptor>,
-    /// The primitive topology used to interpret vertices.
-    pub primitive_topology: PrimitiveTopology,
-    /// The effect of draw calls on the color aspect of the output target.
-    pub color_states: &'a [ColorStateDescriptor],
+    /// The compiled vertex stage, its entry point, and the input buffers layout.
+    pub vertex: VertexState<'a>,
+    /// The properties of the pipeline at the primitive assembly and rasterization level.
+    pub primitive: PrimitiveState,
     /// The effect of draw calls on the depth and stencil aspects of the output target, if any.
-    pub depth_stencil_state: Option<DepthStencilStateDescriptor>,
-    /// The vertex input state for this pipeline.
-    pub vertex_state: VertexStateDescriptor<'a>,
-    /// The number of samples calculated per pixel (for MSAA). For non-multisampled textures,
-    /// this should be `1`
-    pub sample_count: u32,
-    /// Bitmask that restricts the samples of a pixel modified by this pipeline. All samples
-    /// can be enabled using the value `!0`
-    pub sample_mask: u32,
-    /// When enabled, produces another sample mask per pixel based on the alpha output value, that
-    /// is ANDed with the sample_mask and the primitive coverage to restrict the set of samples
-    /// affected by a primitive.
-    ///
-    /// The implicit mask produced for alpha of zero is guaranteed to be zero, and for alpha of one
-    /// is guaranteed to be all 1-s.
-    pub alpha_to_coverage_enabled: bool,
+    pub depth_stencil: Option<DepthStencilState>,
+    /// The multi-sampling properties of the pipeline.
+    pub multisample: MultisampleState,
+    /// The compiled fragment stage, its entry point, and the color targets.
+    pub fragment: Option<FragmentState<'a>>,
 }
 
 /// Describes the attachments of a compute pass.
@@ -1178,8 +1234,11 @@ pub struct ComputePipelineDescriptor<'a> {
     pub label: Option<&'a str>,
     /// The layout of bind groups for this pipeline.
     pub layout: Option<&'a PipelineLayout>,
-    /// The compiled compute stage and its entry point.
-    pub compute_stage: ProgrammableStageDescriptor<'a>,
+    /// The compiled shader module for this stage.
+    pub module: &'a ShaderModule,
+    /// The name of the entry point in the compiled shader. There must be a function that returns
+    /// void with this name in the shader.
+    pub entry_point: &'a str,
 }
 
 pub use wgt::BufferCopyView as BufferCopyViewBase;
@@ -1198,26 +1257,6 @@ pub struct BindGroupLayoutDescriptor<'a> {
 
     /// Array of entries in this BindGroupLayout
     pub entries: &'a [BindGroupLayoutEntry],
-}
-
-/// Describes how the vertex buffer is interpreted.
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct VertexBufferDescriptor<'a> {
-    /// The stride, in bytes, between elements of this buffer.
-    pub stride: BufferAddress,
-    /// How often this vertex buffer is "stepped" forward.
-    pub step_mode: InputStepMode,
-    /// The list of attributes which comprise a single vertex.
-    pub attributes: &'a [VertexAttributeDescriptor],
-}
-
-/// Describes vertex input state for a render pipeline.
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct VertexStateDescriptor<'a> {
-    /// The format of any index buffers used with this pipeline.
-    pub index_format: Option<IndexFormat>,
-    /// The format of any vertex buffers used with this pipeline.
-    pub vertex_buffers: &'a [VertexBufferDescriptor<'a>],
 }
 
 /// Describes a [`RenderBundleEncoder`].
@@ -1558,6 +1597,14 @@ impl Device {
         }
     }
 
+    /// Creates a new [`QuerySet`].
+    pub fn create_query_set(&self, desc: &QuerySetDescriptor) -> QuerySet {
+        QuerySet {
+            context: Arc::clone(&self.context),
+            id: Context::device_create_query_set(&*self.context, &self.id, desc),
+        }
+    }
+
     /// Create a new [`SwapChain`] which targets `surface`.
     ///
     /// # Panics
@@ -1644,14 +1691,14 @@ trait BufferMappedRangeSlice {
 #[derive(Debug)]
 pub struct BufferView<'a> {
     slice: BufferSlice<'a>,
-    data: BufferMappedRange<'a>,
+    data: BufferMappedRange,
 }
 
 /// Write only view into mapped buffer.
 #[derive(Debug)]
 pub struct BufferViewMut<'a> {
     slice: BufferSlice<'a>,
-    data: BufferMappedRange<'a>,
+    data: BufferMappedRange,
     readable: bool,
 }
 
@@ -1988,6 +2035,49 @@ impl CommandEncoder {
     /// Stops command recording and creates debug group.
     pub fn pop_debug_group(&mut self) {
         Context::command_encoder_pop_debug_group(&*self.context, &self.id);
+    }
+}
+
+/// [`Features::TIMESTAMP_QUERY`] must be enabled on the device in order to call these functions.
+impl CommandEncoder {
+    /// Issue a timestamp command at this point in the queue.
+    /// The timestamp will be written to the specified query set, at the specified index.
+    ///
+    /// Must be multiplied by [`Device::get_timestamp_period`] to get
+    /// the value in nanoseconds. Absolute values have no meaning,
+    /// but timestamps can be subtracted to get the time it takes
+    /// for a string of operations to complete.
+    pub fn write_timestamp(&mut self, query_set: &QuerySet, query_index: u32) {
+        Context::command_encoder_write_timestamp(
+            &*self.context,
+            &self.id,
+            &query_set.id,
+            query_index,
+        )
+    }
+}
+
+/// [`Features::TIMESTAMP_QUERY`] or [`Features::PIPELINE_STATISTICS_QUERY`] must be enabled on the device in order to call these functions.
+impl CommandEncoder {
+    /// Resolve a query set, writing the results into the supplied destination buffer.
+    ///
+    /// Queries may be between 8 and 40 bytes each. See [`PipelineStatisticsType`] for more information.
+    pub fn resolve_query_set(
+        &mut self,
+        query_set: &QuerySet,
+        query_range: Range<u32>,
+        destination: &Buffer,
+        destination_offset: BufferAddress,
+    ) {
+        Context::command_encoder_resolve_query_set(
+            &*self.context,
+            &self.id,
+            &query_set.id,
+            query_range.start,
+            query_range.end - query_range.start,
+            &destination.id,
+            destination_offset,
+        )
     }
 }
 
@@ -2354,6 +2444,36 @@ impl<'a> RenderPass<'a> {
     }
 }
 
+/// [`Features::TIMESTAMP_QUERY`] must be enabled on the device in order to call these functions.
+impl<'a> RenderPass<'a> {
+    /// Issue a timestamp command at this point in the queue. The
+    /// timestamp will be written to the specified query set, at the specified index.
+    ///
+    /// Must be multiplied by [`Device::get_timestamp_period`] to get
+    /// the value in nanoseconds. Absolute values have no meaning,
+    /// but timestamps can be subtracted to get the time it takes
+    /// for a string of operations to complete.
+    pub fn write_timestamp(&mut self, query_set: &QuerySet, query_index: u32) {
+        self.id.write_timestamp(&query_set.id, query_index)
+    }
+}
+
+/// [`Features::PIPEILNE_STATISTICS_QUERY`] must be enabled on the device in order to call these functions.
+impl<'a> RenderPass<'a> {
+    /// Start a pipeline statistics query on this render pass. It can be ended with
+    /// `end_pipeline_statistics_query`. Pipeline statistics queries may not be nested.
+    pub fn begin_pipeline_statistics_query(&mut self, query_set: &QuerySet, query_index: u32) {
+        self.id
+            .begin_pipeline_statistics_query(&query_set.id, query_index);
+    }
+
+    /// End the pipeline statistics query on this render pass. It can be started with
+    /// `begin_pipeline_statistics_query`. Pipeline statistics queries may not be nested.
+    pub fn end_pipeline_statistics_query(&mut self) {
+        self.id.end_pipeline_statistics_query();
+    }
+}
+
 impl<'a> Drop for RenderPass<'a> {
     fn drop(&mut self) {
         if !thread::panicking() {
@@ -2427,6 +2547,35 @@ impl<'a> ComputePass<'a> {
     /// of 4..16.
     pub fn set_push_constants(&mut self, offset: u32, data: &[u8]) {
         self.id.set_push_constants(offset, data);
+    }
+}
+
+/// [`Features::TIMESTAMP_QUERY`] must be enabled on the device in order to call these functions.
+impl<'a> ComputePass<'a> {
+    /// Issue a timestamp command at this point in the queue. The timestamp will be written to the specified query set, at the specified index.
+    ///
+    /// Must be multiplied by [`Device::get_timestamp_period`] to get
+    /// the value in nanoseconds. Absolute values have no meaning,
+    /// but timestamps can be subtracted to get the time it takes
+    /// for a string of operations to complete.
+    pub fn write_timestamp(&mut self, query_set: &QuerySet, query_index: u32) {
+        self.id.write_timestamp(&query_set.id, query_index)
+    }
+}
+
+/// [`Features::PIPEILNE_STATISTICS_QUERY`] must be enabled on the device in order to call these functions.
+impl<'a> ComputePass<'a> {
+    /// Start a pipeline statistics query on this render pass. It can be ended with
+    /// `end_pipeline_statistics_query`. Pipeline statistics queries may not be nested.
+    pub fn begin_pipeline_statistics_query(&mut self, query_set: &QuerySet, query_index: u32) {
+        self.id
+            .begin_pipeline_statistics_query(&query_set.id, query_index);
+    }
+
+    /// End the pipeline statistics query on this render pass. It can be started with
+    /// `begin_pipeline_statistics_query`. Pipeline statistics queries may not be nested.
+    pub fn end_pipeline_statistics_query(&mut self) {
+        self.id.end_pipeline_statistics_query();
     }
 }
 
@@ -2634,6 +2783,13 @@ impl Queue {
                 .into_iter()
                 .map(|mut comb| comb.id.take().unwrap()),
         );
+    }
+
+    /// Gets the amount of nanoseconds each tick of a timestamp query represents.
+    ///
+    /// Returns zero if timestamp queries are unsupported.
+    pub fn get_timestamp_period(&self) -> f32 {
+        Context::queue_get_timestamp_period(&*self.context, &self.id)
     }
 }
 

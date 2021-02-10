@@ -1,6 +1,6 @@
 [package]
 name = "wgpu"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["wgpu developers"]
 edition = "2018"
 description = "Rusty WebGPU API wrapper"
@@ -26,20 +26,20 @@ webgl = ["wgc"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.wgc]
 package = "wgpu-core"
 git = "https://github.com/gfx-rs/wgpu"
-rev = "c788b1cef630fa5b5f0a86132fe84551d4149fb6"
+rev = "b1b44ca78c6a55e200f25da38f7b47b4c90928e9"
 features = ["raw-window-handle"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.wgc]
 package = "wgpu-core"
 git = "https://github.com/gfx-rs/wgpu"
-rev = "c788b1cef630fa5b5f0a86132fe84551d4149fb6"
+rev = "b1b44ca78c6a55e200f25da38f7b47b4c90928e9"
 features = ["raw-window-handle"]
 optional = true
 
 [dependencies.wgt]
 package = "wgpu-types"
 git = "https://github.com/gfx-rs/wgpu"
-rev = "c788b1cef630fa5b5f0a86132fe84551d4149fb6"
+rev = "b1b44ca78c6a55e200f25da38f7b47b4c90928e9"
 
 [dependencies]
 arrayvec = "0.5"
@@ -47,25 +47,28 @@ parking_lot = "0.11"
 raw-window-handle = "0.3"
 smallvec = "1"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-typed-arena = "2.0.1"
 serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
-cgmath = "0.17"
-log = "0.4"
-png = "0.16"
-winit = { version = "0.24.0", features = ["web-sys"] }
-rand = { version = "0.7.2", features = ["wasm-bindgen"] }
 bytemuck = { version = "1.4", features = ["derive"] }
-noise = "0.6"
+cgmath = "0.18"
 ddsfile = "0.4"
+log = "0.4"
+naga = { git = "https://github.com/gfx-rs/naga", tag = "gfx-10", features = ["wgsl-in"] }
+noise = "0.7"
+png = "0.16"
+rand = { version = "0.7.2", features = ["wasm-bindgen"] }
+winit = { version = "0.24.0", features = ["web-sys"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 async-executor = "1.0"
 pollster = "0.2"
+wgpu-subscriber = "0.1"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.wgpu-subscriber]
-version = "0.1"
+[target.'cfg(target_arch = "wasm32")'.dependencies.naga]
+git = "https://github.com/gfx-rs/naga"
+tag = "gfx-10"
+features = ["wgsl-in", "spv-out"]
 
 [[example]]
 name="hello-compute"

@@ -1,6 +1,7 @@
 // Flocking boids example with gpu compute update pass
 // adapted from https://github.com/austinEng/webgpu-samples/blob/master/src/examples/computeBoids.ts
 
+use std::{borrow::Cow, mem};
 use wgpu::util::DeviceExt;
 
 #[path = "../framework.rs"]
@@ -29,14 +30,28 @@ impl framework::Example for Example {
     /// constructs initial instance of Example struct
     fn init(
         sc_desc: &wgpu::SwapChainDescriptor,
+        adapter: &wgpu::Adapter,
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
     ) -> Self {
-        // load (and compile) shaders and create shader modules
-
-        let boids_module = device.create_shader_module(&wgpu::include_spirv!("boids.comp.spv"));
-        let vs_module = device.create_shader_module(&wgpu::include_spirv!("shader.vert.spv"));
-        let fs_module = device.create_shader_module(&wgpu::include_spirv!("shader.frag.spv"));
+        // load and compile the shader
+        let mut flags = wgpu::ShaderFlags::VALIDATION;
+        match adapter.get_info().backend {
+            wgt::Backend::Vulkan | wgt::Backend::Metal => {
+                flags |= wgpu::ShaderFlags::EXPERIMENTAL_TRANSLATION;
+            }
+            _ => {} //TODO
+        }
+        let compute_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
+            flags,
+        });
+        let draw_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("draw.wgsl"))),
+            flags,
+        });
 
         // buffer for simulation parameters uniform
 
@@ -68,7 +83,7 @@ impl framework::Example for Example {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(
-                                (sim_param_data.len() * std::mem::size_of::<f32>()) as _,
+                                (sim_param_data.len() * mem::size_of::<f32>()) as _,
                             ),
                         },
                         count: None,
@@ -77,7 +92,7 @@ impl framework::Example for Example {
                         binding: 1,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new((NUM_PARTICLES * 16) as _),
                         },
@@ -115,40 +130,30 @@ impl framework::Example for Example {
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&render_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
+            vertex: wgpu::VertexState {
+                module: &draw_shader,
                 entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
-                ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[sc_desc.format.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: None,
-                vertex_buffers: &[
-                    wgpu::VertexBufferDescriptor {
-                        stride: 4 * 4,
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: 4 * 4,
                         step_mode: wgpu::InputStepMode::Instance,
                         attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float2],
                     },
-                    wgpu::VertexBufferDescriptor {
-                        stride: 2 * 4,
+                    wgpu::VertexBufferLayout {
+                        array_stride: 2 * 4,
                         step_mode: wgpu::InputStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![2 => Float2],
                     },
                 ],
             },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_shader,
+                entry_point: "main",
+                targets: &[sc_desc.format.into()],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
         });
 
         // create compute pipeline
@@ -156,10 +161,8 @@ impl framework::Example for Example {
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Compute pipeline"),
             layout: Some(&compute_pipeline_layout),
-            compute_stage: wgpu::ProgrammableStageDescriptor {
-                module: &boids_module,
-                entry_point: "main",
-            },
+            module: &compute_shader,
+            entry_point: "main",
         });
 
         // buffer for the three 2d triangle vertices of each instance

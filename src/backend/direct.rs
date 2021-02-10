@@ -20,7 +20,6 @@ use std::{
     slice,
     sync::Arc,
 };
-use typed_arena::Arena;
 
 const LABEL: &str = "label";
 
@@ -184,6 +183,25 @@ mod pass_impl {
         fn pop_debug_group(&mut self) {
             wgpu_compute_pass_pop_debug_group(self);
         }
+
+        fn write_timestamp(&mut self, query_set: &wgc::id::QuerySetId, query_index: u32) {
+            unsafe { wgpu_compute_pass_write_timestamp(self, *query_set, query_index) }
+        }
+
+        fn begin_pipeline_statistics_query(
+            &mut self,
+            query_set: &wgc::id::QuerySetId,
+            query_index: u32,
+        ) {
+            unsafe {
+                wgpu_compute_pass_begin_pipeline_statistics_query(self, *query_set, query_index)
+            }
+        }
+
+        fn end_pipeline_statistics_query(&mut self) {
+            unsafe { wgpu_compute_pass_end_pipeline_statistics_query(self) }
+        }
+
         fn dispatch(&mut self, x: u32, y: u32, z: u32) {
             wgpu_compute_pass_dispatch(self, x, y, z)
         }
@@ -373,6 +391,24 @@ mod pass_impl {
 
         fn pop_debug_group(&mut self) {
             wgpu_render_pass_pop_debug_group(self);
+        }
+
+        fn write_timestamp(&mut self, query_set: &wgc::id::QuerySetId, query_index: u32) {
+            unsafe { wgpu_render_pass_write_timestamp(self, *query_set, query_index) }
+        }
+
+        fn begin_pipeline_statistics_query(
+            &mut self,
+            query_set: &wgc::id::QuerySetId,
+            query_index: u32,
+        ) {
+            unsafe {
+                wgpu_render_pass_begin_pipeline_statistics_query(self, *query_set, query_index)
+            }
+        }
+
+        fn end_pipeline_statistics_query(&mut self) {
+            unsafe { wgpu_render_pass_end_pipeline_statistics_query(self) }
         }
 
         fn execute_bundles<'a, I: Iterator<Item = &'a wgc::id::RenderBundleId>>(
@@ -571,6 +607,7 @@ fn map_pass_channel<V: Copy + Default>(
 pub(crate) struct Device {
     id: wgc::id::DeviceId,
     error_sink: ErrorSink,
+    features: Features,
 }
 
 #[derive(Debug)]
@@ -600,6 +637,7 @@ impl crate::Context for Context {
     type BindGroupId = wgc::id::BindGroupId;
     type TextureViewId = wgc::id::TextureViewId;
     type SamplerId = wgc::id::SamplerId;
+    type QuerySetId = wgc::id::QuerySetId;
     type BufferId = Buffer;
     type TextureId = Texture;
     type PipelineLayoutId = wgc::id::PipelineLayoutId;
@@ -669,6 +707,7 @@ impl crate::Context for Context {
         let device = Device {
             id: device_id,
             error_sink: Arc::new(Mutex::new(ErrorSinkRaw::new())),
+            features: desc.features,
         };
         ready(Ok((device, device_id)))
     }
@@ -816,7 +855,23 @@ impl crate::Context for Context {
         wgc::span!(_guard, TRACE, "Device::create_bind_group wrapper");
         use wgc::binding_model as bm;
 
-        let texture_view_arena: Arena<wgc::id::TextureViewId> = Arena::new();
+        let mut arrayed_texture_views = Vec::new();
+        if device
+            .features
+            .contains(Features::SAMPLED_TEXTURE_BINDING_ARRAY)
+        {
+            // gather all the array view IDs first
+            for entry in desc.entries.iter() {
+                match entry.resource {
+                    BindingResource::TextureViewArray(array) => {
+                        arrayed_texture_views.extend(array.iter().map(|view| view.id));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut remaining_arrayed_texture_views = &arrayed_texture_views[..];
+
         let entries = desc
             .entries
             .iter()
@@ -836,11 +891,11 @@ impl crate::Context for Context {
                     BindingResource::TextureView(texture_view) => {
                         bm::BindingResource::TextureView(texture_view.id)
                     }
-                    BindingResource::TextureViewArray(texture_view_array) => {
-                        bm::BindingResource::TextureViewArray(Borrowed(
-                            texture_view_arena
-                                .alloc_extend(texture_view_array.iter().map(|view| view.id)),
-                        ))
+                    BindingResource::TextureViewArray(array) => {
+                        let slice = &remaining_arrayed_texture_views[..array.len()];
+                        remaining_arrayed_texture_views =
+                            &remaining_arrayed_texture_views[array.len()..];
+                        bm::BindingResource::TextureViewArray(Borrowed(slice))
                     }
                 },
             })
@@ -922,31 +977,16 @@ impl crate::Context for Context {
         wgc::span!(_guard, TRACE, "Device::create_render_pipeline wrapper");
         use wgc::pipeline as pipe;
 
-        let vertex_stage = pipe::ProgrammableStageDescriptor {
-            module: desc.vertex_stage.module.id,
-            entry_point: Borrowed(&desc.vertex_stage.entry_point),
-        };
-        let fragment_stage =
-            desc.fragment_stage
-                .as_ref()
-                .map(|fs| pipe::ProgrammableStageDescriptor {
-                    module: fs.module.id,
-                    entry_point: Borrowed(&fs.entry_point),
-                });
         let vertex_buffers: ArrayVec<[_; wgc::device::MAX_VERTEX_BUFFERS]> = desc
-            .vertex_state
-            .vertex_buffers
+            .vertex
+            .buffers
             .iter()
-            .map(|vertex_buffer| pipe::VertexBufferDescriptor {
-                stride: vertex_buffer.stride,
-                step_mode: vertex_buffer.step_mode,
-                attributes: Borrowed(vertex_buffer.attributes),
+            .map(|vbuf| pipe::VertexBufferLayout {
+                array_stride: vbuf.array_stride,
+                step_mode: vbuf.step_mode,
+                attributes: Borrowed(vbuf.attributes),
             })
             .collect();
-        let vertex_state = pipe::VertexStateDescriptor {
-            index_format: desc.vertex_state.index_format,
-            vertex_buffers: Borrowed(&vertex_buffers),
-        };
 
         let implicit_pipeline_ids = match desc.layout {
             Some(_) => None,
@@ -958,16 +998,23 @@ impl crate::Context for Context {
         let descriptor = pipe::RenderPipelineDescriptor {
             label: desc.label.map(Borrowed),
             layout: desc.layout.map(|l| l.id),
-            vertex_stage,
-            fragment_stage,
-            rasterization_state: desc.rasterization_state.clone(),
-            primitive_topology: desc.primitive_topology,
-            color_states: Borrowed(&desc.color_states),
-            depth_stencil_state: desc.depth_stencil_state.clone(),
-            vertex_state: vertex_state,
-            sample_count: desc.sample_count,
-            sample_mask: desc.sample_mask,
-            alpha_to_coverage_enabled: desc.alpha_to_coverage_enabled,
+            vertex: pipe::VertexState {
+                stage: pipe::ProgrammableStageDescriptor {
+                    module: desc.vertex.module.id,
+                    entry_point: Borrowed(desc.vertex.entry_point),
+                },
+                buffers: Borrowed(&vertex_buffers),
+            },
+            primitive: desc.primitive.clone(),
+            depth_stencil: desc.depth_stencil.clone(),
+            multisample: desc.multisample.clone(),
+            fragment: desc.fragment.as_ref().map(|frag| pipe::FragmentState {
+                stage: pipe::ProgrammableStageDescriptor {
+                    module: frag.module.id,
+                    entry_point: Borrowed(frag.entry_point),
+                },
+                targets: Borrowed(frag.targets),
+            }),
         };
 
         let global = &self.0;
@@ -1006,9 +1053,9 @@ impl crate::Context for Context {
         let descriptor = pipe::ComputePipelineDescriptor {
             label: desc.label.map(Borrowed),
             layout: desc.layout.map(|l| l.id),
-            compute_stage: pipe::ProgrammableStageDescriptor {
-                module: desc.compute_stage.module.id,
-                entry_point: Borrowed(&desc.compute_stage.entry_point),
+            stage: pipe::ProgrammableStageDescriptor {
+                module: desc.module.id,
+                entry_point: Borrowed(desc.entry_point),
             },
         };
 
@@ -1119,6 +1166,23 @@ impl crate::Context for Context {
                 desc.label,
                 "Device::create_sampler",
             );
+        }
+        id
+    }
+
+    fn device_create_query_set(
+        &self,
+        device: &Self::DeviceId,
+        desc: &wgt::QuerySetDescriptor,
+    ) -> Self::QuerySetId {
+        let global = &self.0;
+        let (id, error) = wgc::gfx_select!(device.id => global.device_create_query_set(
+            device.id,
+            &desc,
+            PhantomData
+        ));
+        if let Some(cause) = error {
+            self.handle_error_nolabel(&device.error_sink, cause, "Device::create_query_set");
         }
         id
     }
@@ -1261,7 +1325,6 @@ impl crate::Context for Context {
             Ok(ptr) => BufferMappedRange {
                 ptr,
                 size: size as usize,
-                phantom: PhantomData,
             },
             Err(err) => self.handle_error_fatal(err, "Buffer::get_mapped_range"),
         }
@@ -1373,7 +1436,7 @@ impl crate::Context for Context {
     }
     fn texture_view_drop(&self, texture_view: &Self::TextureViewId) {
         let global = &self.0;
-        match wgc::gfx_select!(*texture_view => global.texture_view_drop(*texture_view)) {
+        match wgc::gfx_select!(*texture_view => global.texture_view_drop(*texture_view, false)) {
             Ok(()) => (),
             Err(err) => self.handle_error_fatal(err, "TextureView::drop"),
         }
@@ -1381,6 +1444,10 @@ impl crate::Context for Context {
     fn sampler_drop(&self, sampler: &Self::SamplerId) {
         let global = &self.0;
         wgc::gfx_select!(*sampler => global.sampler_drop(*sampler))
+    }
+    fn query_set_drop(&self, query_set: &Self::QuerySetId) {
+        let global = &self.0;
+        wgc::gfx_select!(*query_set => global.query_set_drop(*query_set))
     }
     fn bind_group_drop(&self, bind_group: &Self::BindGroupId) {
         let global = &self.0;
@@ -1528,6 +1595,52 @@ impl crate::Context for Context {
                 &encoder.error_sink,
                 cause,
                 "CommandEncoder::copy_texture_to_texture",
+            );
+        }
+    }
+
+    fn command_encoder_write_timestamp(
+        &self,
+        encoder: &Self::CommandEncoderId,
+        query_set: &Self::QuerySetId,
+        query_index: u32,
+    ) {
+        let global = &self.0;
+        if let Err(cause) = wgc::gfx_select!(encoder.id => global.command_encoder_write_timestamp(
+            encoder.id,
+            *query_set,
+            query_index
+        )) {
+            self.handle_error_nolabel(
+                &encoder.error_sink,
+                cause,
+                "CommandEncoder::write_timestamp",
+            );
+        }
+    }
+
+    fn command_encoder_resolve_query_set(
+        &self,
+        encoder: &Self::CommandEncoderId,
+        query_set: &Self::QuerySetId,
+        first_query: u32,
+        query_count: u32,
+        destination: &Self::BufferId,
+        destination_offset: wgt::BufferAddress,
+    ) {
+        let global = &self.0;
+        if let Err(cause) = wgc::gfx_select!(encoder.id => global.command_encoder_resolve_query_set(
+            encoder.id,
+            *query_set,
+            first_query,
+            query_count,
+            destination.id,
+            destination_offset
+        )) {
+            self.handle_error_nolabel(
+                &encoder.error_sink,
+                cause,
+                "CommandEncoder::resolve_query_set",
             );
         }
     }
@@ -1732,6 +1845,19 @@ impl crate::Context for Context {
             Err(err) => self.handle_error_fatal(err, "Queue::submit"),
         }
     }
+
+    fn queue_get_timestamp_period(&self, queue: &Self::QueueId) -> f32 {
+        let global = &self.0;
+        let res = wgc::gfx_select!(queue => global.queue_get_timestamp_period(
+            *queue
+        ));
+        match res {
+            Ok(v) => v,
+            Err(cause) => {
+                self.handle_error_fatal(cause, "Queue::get_timestamp_period");
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1770,13 +1896,12 @@ fn default_error_handler(err: crate::Error) {
 }
 
 #[derive(Debug)]
-pub struct BufferMappedRange<'a> {
+pub struct BufferMappedRange {
     ptr: *mut u8,
     size: usize,
-    phantom: PhantomData<&'a ()>,
 }
 
-impl<'a> crate::BufferMappedRangeSlice for BufferMappedRange<'a> {
+impl crate::BufferMappedRangeSlice for BufferMappedRange {
     fn slice(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }
@@ -1786,7 +1911,7 @@ impl<'a> crate::BufferMappedRangeSlice for BufferMappedRange<'a> {
     }
 }
 
-impl<'a> Drop for BufferMappedRange<'a> {
+impl Drop for BufferMappedRange {
     fn drop(&mut self) {
         // Intentionally left blank so that `BufferMappedRange` still
         // implements `Drop`, to match the web backend

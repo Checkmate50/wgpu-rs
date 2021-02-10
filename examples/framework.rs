@@ -41,6 +41,7 @@ pub trait Example: 'static + Sized {
     }
     fn init(
         sc_desc: &wgpu::SwapChainDescriptor,
+        adapter: &wgpu::Adapter,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Self;
@@ -209,7 +210,7 @@ fn start<E: Example>(
     let mut swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
     log::info!("Initializing the example...");
-    let mut example = E::init(&sc_desc, &device, &queue);
+    let mut example = E::init(&sc_desc, &adapter, &device, &queue);
 
     #[cfg(not(target_arch = "wasm32"))]
     // let mut last_update_inst = Instant::now();
@@ -266,8 +267,8 @@ fn start<E: Example>(
                 ..
             } => {
                 log::info!("Resizing to {:?}", size);
-                sc_desc.width = if size.width == 0 { 1 } else { size.width };
-                sc_desc.height = if size.height == 0 { 1 } else { size.height };
+                sc_desc.width = size.width.max(1);
+                sc_desc.height = size.height.max(1);
                 example.resize(&sc_desc, &device, &queue);
                 swap_chain = device.create_swap_chain(&surface, &sc_desc);
             }

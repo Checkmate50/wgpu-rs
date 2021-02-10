@@ -1,6 +1,6 @@
 use std::future::Future;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+//use std::time::{Duration, Instant};
 use winit::{
     event::{self, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -204,7 +204,7 @@ fn start<E: Example>(
         format: adapter.get_swap_chain_preferred_format(&surface),
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Mailbox,
+        present_mode: wgpu::PresentMode::Immediate,
     };
     let mut swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
@@ -212,10 +212,21 @@ fn start<E: Example>(
     let mut example = E::init(&sc_desc, &device, &queue);
 
     #[cfg(not(target_arch = "wasm32"))]
-    let mut last_update_inst = Instant::now();
+    // let mut last_update_inst = Instant::now();
 
     log::info!("Entering render loop...");
+    let mut last_second = std::time::Instant::now();
+    let mut frame_count = 0;
     event_loop.run(move |event, _, control_flow| {
+        let now = std::time::Instant::now();
+        let dt = now - last_second;
+        frame_count += 1;
+        if dt.as_micros() >= 5000000 {
+            window.set_title(&format!("{:.2}", frame_count as f64 * 1000000.0 / dt.as_micros() as f64));
+            frame_count = 0;
+            last_second = now;
+        }
+
         let _ = (&instance, &adapter); // force ownership by the closure
         *control_flow = if cfg!(feature = "metal-auto-capture") {
             ControlFlow::Exit
@@ -232,18 +243,19 @@ fn start<E: Example>(
                     // winit has window.current_monitor().video_modes() but that is a list of all full screen video modes.
                     // So without extra dependencies it's a bit tricky to get the max refresh rate we can run the window on.
                     // Therefore we just go with 60fps - sorry 120hz+ folks!
-                    let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
-                    let time_since_last_frame = last_update_inst.elapsed();
-                    if time_since_last_frame >= target_frametime {
-                        window.request_redraw();
-                        last_update_inst = Instant::now();
-                    } else {
-                        *control_flow = ControlFlow::WaitUntil(
-                            Instant::now() + target_frametime - time_since_last_frame,
-                        );
-                    }
+                    // let target_frametime = Duration::from_secs_f64(1.0 / 60.0);
+                    // let time_since_last_frame = last_update_inst.elapsed();
+                    // if time_since_last_frame >= target_frametime {
+                        
+                    //     last_update_inst = Instant::now();
+                    // } else {
+                    //     *control_flow = ControlFlow::WaitUntil(
+                    //         Instant::now() + target_frametime - time_since_last_frame,
+                    //     );
+                    // }
+                    window.request_redraw();
 
-                    spawner.run_until_stalled();
+                    //spawner.run_until_stalled();
                 }
 
                 #[cfg(target_arch = "wasm32")]
@@ -286,7 +298,6 @@ fn start<E: Example>(
                             .expect("Failed to acquire next swap chain texture!")
                     }
                 };
-
                 example.render(&frame.output, &device, &queue, &spawner);
             }
             _ => {}
@@ -312,9 +323,9 @@ impl<'a> Spawner<'a> {
         self.executor.spawn(future).detach();
     }
 
-    fn run_until_stalled(&self) {
-        while self.executor.try_tick() {}
-    }
+    //fn run_until_stalled(&self) {
+    //    while self.executor.try_tick() {}
+    //}
 }
 
 #[cfg(target_arch = "wasm32")]

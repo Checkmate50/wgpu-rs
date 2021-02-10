@@ -81,10 +81,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
+    let mut last_second = std::time::Instant::now();
+    let mut frame_count = 0;
+
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
         // `event_loop.run` never returns, therefore we must do this to ensure
         // the resources are properly cleaned up.
+        let now = std::time::Instant::now();
+        let dt = now - last_second;
+        frame_count += 1;
+        if dt.as_micros() >= 1000000 {
+            window.set_title(&format!("{:.2}", frame_count as f64 * 1000000.0 / dt.as_micros() as f64));
+            frame_count = 0;
+            last_second = now;
+        }
+
         let _ = (&instance, &adapter, &shader, &pipeline_layout);
 
         *control_flow = ControlFlow::Poll;

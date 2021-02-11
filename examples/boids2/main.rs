@@ -239,6 +239,36 @@ impl framework::Example for Example {
             ],
             label: None,
         }));
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout1,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sim_param_buffer.as_entire_binding(),
+                },
+            ],
+            label: None,
+        }));
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout2,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: particle_buffers[1].as_entire_binding(),
+                },
+            ],
+            label: None,
+        }));
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout3,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: particle_buffers[0].as_entire_binding(), // bind to opposite buffer
+                },
+            ],
+            label: None,
+        }));
 
         // calculates number of work groups from PARTICLES_PER_GROUP constant
         let work_group_count =
@@ -306,7 +336,9 @@ impl framework::Example for Example {
             let mut cpass =
                 command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
             cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2], &[]);
+            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2 * 3], &[]);
+            cpass.set_bind_group(1, &self.particle_bind_groups[self.frame_num % 2 * 3 + 1], &[]);
+            cpass.set_bind_group(2, &self.particle_bind_groups[self.frame_num % 2 * 3 + 2], &[]);
             cpass.dispatch(self.work_group_count, 1, 1);
         }
         command_encoder.pop_debug_group();

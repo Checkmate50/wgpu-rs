@@ -71,7 +71,7 @@ impl framework::Example for Example {
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
 
-        // create compute bind layout group and compute pipeline layout
+        // create compute bind layout groups and compute pipeline layout
 
         let compute_bind_group_layout1 =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -117,7 +117,7 @@ impl framework::Example for Example {
         let compute_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("compute"),
-                bind_group_layouts: &[&compute_bind_group_layout1, 
+                bind_group_layouts: &[&compute_bind_group_layout1,
                     &compute_bind_group_layout2, &compute_bind_group_layout3],
                 push_constant_ranges: &[],
             });
@@ -206,41 +206,39 @@ impl framework::Example for Example {
             );
         }
 
-        // create two bind groups, one for each buffer as the src
-        // where the alternate buffer is used as the dst
+        // create six bind groups, three for the src buffers
+        // and the remaining three for the dst
 
-        for i in 0..2 {
-            particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &compute_bind_group_layout1,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: sim_param_buffer.as_entire_binding(),
-                    },
-                ],
-                label: None,
-            }));
-            particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &compute_bind_group_layout2,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: particle_buffers[i].as_entire_binding(),
-                    },
-                ],
-                label: None,
-            }));
-            particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &compute_bind_group_layout3,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: particle_buffers[(i + 1) % 2].as_entire_binding(), // bind to opposite buffer
-                    },
-                ],
-                label: None,
-            }));
-        }
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout1,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sim_param_buffer.as_entire_binding(),
+                },
+            ],
+            label: None,
+        }));
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout2,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: particle_buffers[0].as_entire_binding(),
+                },
+            ],
+            label: None,
+        }));
+        particle_bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &compute_bind_group_layout3,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: particle_buffers[1].as_entire_binding(), // bind to opposite buffer
+                },
+            ],
+            label: None,
+        }));
 
         // calculates number of work groups from PARTICLES_PER_GROUP constant
         let work_group_count =

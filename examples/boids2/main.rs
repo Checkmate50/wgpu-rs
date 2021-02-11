@@ -95,7 +95,7 @@ impl framework::Example for Example {
                         binding: 0,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new((NUM_PARTICLES * 16) as _),
                         },
@@ -336,9 +336,9 @@ impl framework::Example for Example {
             let mut cpass =
                 command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
             cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2 * 3], &[]);
-            cpass.set_bind_group(1, &self.particle_bind_groups[self.frame_num % 2 * 3 + 1], &[]);
-            cpass.set_bind_group(2, &self.particle_bind_groups[self.frame_num % 2 * 3 + 2], &[]);
+            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2], &[]);
+            cpass.set_bind_group(1, &self.particle_bind_groups[self.frame_num % 2 + 1], &[]);
+            cpass.set_bind_group(2, &self.particle_bind_groups[(self.frame_num % 2 + 1) + 1], &[]);
             cpass.dispatch(self.work_group_count, 1, 1);
         }
         command_encoder.pop_debug_group();

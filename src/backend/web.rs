@@ -507,13 +507,13 @@ fn map_texture_component_type(
     }
 }
 
-fn map_cull_mode(cull_mode: wgt::CullMode) -> web_sys::GpuCullMode {
+fn map_cull_mode(cull_mode: Option<wgt::Face>) -> web_sys::GpuCullMode {
     use web_sys::GpuCullMode as cm;
-    use wgt::CullMode;
+    use wgt::Face;
     match cull_mode {
-        CullMode::None => cm::None,
-        CullMode::Front => cm::Front,
-        CullMode::Back => cm::Back,
+        None => cm::None,
+        Some(Face::Front) => cm::Front,
+        Some(Face::Back) => cm::Back,
     }
 }
 
@@ -943,6 +943,10 @@ impl crate::Context for Context {
             wasm_bindgen_futures::JsFuture::from(adapter_promise),
             future_request_adapter,
         )
+    }
+
+    fn instance_poll_all_devices(&self, _force_wait: bool) {
+        // Devices are automatically polled.
     }
 
     fn adapter_request_device(

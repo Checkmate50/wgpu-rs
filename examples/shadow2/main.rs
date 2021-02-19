@@ -512,7 +512,7 @@ impl framework::Example for Example {
 
         let forward_pass = {
             // Create pipeline layout
-            let bind_group_layout =
+            let bind_group_layout1 =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     entries: &[
                         wgpu::BindGroupLayoutEntry {
@@ -526,7 +526,13 @@ impl framework::Example for Example {
                                 ),
                             },
                             count: None,
-                        },
+                        }
+                    ],
+                    label: None,
+                });
+            let bind_group_layout2 =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
                         wgpu::BindGroupLayoutEntry {
                             binding: 1, // lights
                             visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
@@ -536,7 +542,13 @@ impl framework::Example for Example {
                                 min_binding_size: wgpu::BufferSize::new(light_uniform_size),
                             },
                             count: None,
-                        },
+                        }
+                    ],
+                    label: None,
+                });
+            let bind_group_layout3 =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
                         wgpu::BindGroupLayoutEntry {
                             binding: 2,
                             visibility: wgpu::ShaderStage::FRAGMENT,
@@ -546,7 +558,13 @@ impl framework::Example for Example {
                                 view_dimension: wgpu::TextureViewDimension::D2Array,
                             },
                             count: None,
-                        },
+                        }
+                    ],
+                    label: None,
+                });
+            let bind_group_layout4 =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
                         wgpu::BindGroupLayoutEntry {
                             binding: 3,
                             visibility: wgpu::ShaderStage::FRAGMENT,
@@ -555,13 +573,14 @@ impl framework::Example for Example {
                                 filtering: false,
                             },
                             count: None,
-                        },
+                        }
                     ],
                     label: None,
-                });
+                });   
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("main"),
-                bind_group_layouts: &[&bind_group_layout, &local_bind_group_layout],
+                bind_group_layouts: &[&bind_group_layout1, &local_bind_group_layout, 
+                    &bind_group_layout2, &bind_group_layout3, &bind_group_layout4],
                 push_constant_ranges: &[],
             });
 

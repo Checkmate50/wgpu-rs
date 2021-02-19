@@ -57,11 +57,11 @@ struct Lights {
     data: [[stride(96)]] array<Light>;
 };
 
-[[group(0), binding(1)]]
+[[group(2), binding(0)]]
 var<storage> s_lights: [[access(read)]] Lights;
-[[group(0), binding(2)]]
+[[group(3), binding(0)]]
 var t_shadow: texture_depth_2d_array;
-[[group(0), binding(3)]]
+[[group(4), binding(0)]]
 var sampler_shadow: sampler;
 
 fn fetch_shadow(light_id: u32, homogeneous_coords: vec4<f32>) -> f32 {
